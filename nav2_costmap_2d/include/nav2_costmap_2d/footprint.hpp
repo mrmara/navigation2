@@ -40,13 +40,14 @@
 
 #include <string>
 #include <vector>
+#include <utility>
 
 #include "rclcpp/rclcpp.hpp"
 #include "geometry_msgs/msg/polygon.hpp"
 #include "geometry_msgs/msg/polygon_stamped.hpp"
 #include "geometry_msgs/msg/point.hpp"
 #include "geometry_msgs/msg/point32.hpp"
-#include "nav2_util/lifecycle_node.hpp"
+#include "nav2_ros_common/lifecycle_node.hpp"
 
 namespace nav2_costmap_2d
 {
@@ -58,9 +59,8 @@ namespace nav2_costmap_2d
  * @param min_dist Output parameter of the minimum distance
  * @param max_dist Output parameter of the maximum distance
  */
-void calculateMinAndMaxDistances(
-  const std::vector<geometry_msgs::msg::Point> & footprint,
-  double & min_dist, double & max_dist);
+std::pair<double, double> calculateMinAndMaxDistances(
+  const std::vector<geometry_msgs::msg::Point> & footprint);
 
 /**
  * @brief Convert Point32 to Point

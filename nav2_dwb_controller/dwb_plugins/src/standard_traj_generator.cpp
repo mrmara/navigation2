@@ -41,13 +41,13 @@
 #include "nav_2d_utils/parameters.hpp"
 #include "pluginlib/class_list_macros.hpp"
 #include "dwb_core/exceptions.hpp"
-#include "nav2_util/node_utils.hpp"
+#include "nav2_ros_common/node_utils.hpp"
 
 namespace dwb_plugins
 {
 
 void StandardTrajectoryGenerator::initialize(
-  const nav2_util::LifecycleNode::SharedPtr & nh,
+  const nav2::LifecycleNode::SharedPtr & nh,
   const std::string & plugin_name)
 {
   plugin_name_ = plugin_name;
@@ -55,25 +55,29 @@ void StandardTrajectoryGenerator::initialize(
   kinematics_handler_->initialize(nh, plugin_name_);
   initializeIterator(nh);
 
-  nav2_util::declare_parameter_if_not_declared(
+  nav2::declare_parameter_if_not_declared(
     nh,
     plugin_name + ".sim_time", rclcpp::ParameterValue(1.7));
-  nav2_util::declare_parameter_if_not_declared(
+  nav2::declare_parameter_if_not_declared(
     nh,
     plugin_name + ".discretize_by_time", rclcpp::ParameterValue(false));
 
-  nav2_util::declare_parameter_if_not_declared(
+  nav2::declare_parameter_if_not_declared(
     nh,
     plugin_name + ".time_granularity", rclcpp::ParameterValue(0.5));
-  nav2_util::declare_parameter_if_not_declared(
+  nav2::declare_parameter_if_not_declared(
     nh,
     plugin_name + ".linear_granularity", rclcpp::ParameterValue(0.5));
-  nav2_util::declare_parameter_if_not_declared(
+  nav2::declare_parameter_if_not_declared(
     nh,
     plugin_name + ".angular_granularity", rclcpp::ParameterValue(0.025));
-  nav2_util::declare_parameter_if_not_declared(
+  nav2::declare_parameter_if_not_declared(
     nh,
     plugin_name + ".include_last_point", rclcpp::ParameterValue(true));
+
+  nav2::declare_parameter_if_not_declared(
+    nh,
+    plugin_name + ".limit_vel_cmd_in_traj", rclcpp::ParameterValue(false));
 
   /*
    * If discretize_by_time, then sim_granularity represents the amount of time that should be between
@@ -89,10 +93,11 @@ void StandardTrajectoryGenerator::initialize(
   nh->get_parameter(plugin_name + ".linear_granularity", linear_granularity_);
   nh->get_parameter(plugin_name + ".angular_granularity", angular_granularity_);
   nh->get_parameter(plugin_name + ".include_last_point", include_last_point_);
+  nh->get_parameter(plugin_name + ".limit_vel_cmd_in_traj", limit_vel_cmd_in_traj_);
 }
 
 void StandardTrajectoryGenerator::initializeIterator(
-  const nav2_util::LifecycleNode::SharedPtr & nh)
+  const nav2::LifecycleNode::SharedPtr & nh)
 {
   velocity_iterator_ = std::make_shared<XYThetaIterator>();
   velocity_iterator_->initialize(nh, kinematics_handler_, plugin_name_);
@@ -156,9 +161,14 @@ dwb_msgs::msg::Trajectory2D StandardTrajectoryGenerator::generateTrajectory(
   double running_time = 0.0;
   std::vector<double> steps = getTimeSteps(cmd_vel);
   traj.poses.push_back(start_pose);
+  bool first_vel = false;
   for (double dt : steps) {
     //  calculate velocities
     vel = computeNewVelocity(cmd_vel, vel, dt);
+    if (!first_vel && limit_vel_cmd_in_traj_) {
+      traj.velocity = vel;
+      first_vel = true;
+    }
 
     //  update the position of the robot using the velocities passed in
     pose = computeNewPosition(pose, vel, dt);

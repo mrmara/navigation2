@@ -12,32 +12,38 @@
 // See the License for the specific language governing permissions and
 // limitations under the License. Reserved.
 
-#include <vector>
-#include <string>
+#include <chrono>
 #include <fstream>
+#include <filesystem>
 #include <memory>
+#include <string>
 #include <utility>
-#include <boost/filesystem.hpp>
+#include <vector>
 
 #include "gtest/gtest.h"
 
-#include "behaviortree_cpp_v3/behavior_tree.h"
-#include "behaviortree_cpp_v3/bt_factory.h"
-#include "behaviortree_cpp_v3/utils/shared_library.h"
+#include "behaviortree_cpp/behavior_tree.h"
+#include "behaviortree_cpp/bt_factory.h"
+#include "behaviortree_cpp/utils/shared_library.h"
 
 #include "tf2_ros/buffer.h"
 #include "tf2_ros/transform_listener.h"
 #include "tf2_ros/create_timer_ros.h"
 
 #include "nav2_util/odometry_utils.hpp"
+#include "nav2_util/string_utils.hpp"
+#include "nav2_ros_common/lifecycle_node.hpp"
+
+#include "nav2_behavior_tree/plugins_list.hpp"
 
 #include "rclcpp/rclcpp.hpp"
 #include "ament_index_cpp/get_package_share_directory.hpp"
 
+#include "geometry_msgs/msg/pose_stamped.hpp"
+
 #include "server_handler.hpp"
 
 using namespace std::chrono_literals;
-namespace fs = boost::filesystem;
 
 namespace nav2_system_tests
 {
@@ -47,7 +53,7 @@ class BehaviorTreeHandler
 public:
   BehaviorTreeHandler()
   {
-    node_ = rclcpp::Node::make_shared("behavior_tree_handler");
+    node_ = std::make_shared<nav2::LifecycleNode>("behavior_tree_handler");
 
     tf_ = std::make_shared<tf2_ros::Buffer>(node_->get_clock());
     auto timer_interface = std::make_shared<tf2_ros::CreateTimerROS>(
@@ -58,58 +64,8 @@ public:
 
     odom_smoother_ = std::make_shared<nav2_util::OdomSmoother>(node_);
 
-    const std::vector<std::string> plugin_libs = {
-      "nav2_compute_path_to_pose_action_bt_node",
-      "nav2_compute_path_through_poses_action_bt_node",
-      "nav2_smooth_path_action_bt_node",
-      "nav2_follow_path_action_bt_node",
-      "nav2_spin_action_bt_node",
-      "nav2_wait_action_bt_node",
-      "nav2_assisted_teleop_action_bt_node",
-      "nav2_back_up_action_bt_node",
-      "nav2_drive_on_heading_bt_node",
-      "nav2_clear_costmap_service_bt_node",
-      "nav2_is_stuck_condition_bt_node",
-      "nav2_goal_reached_condition_bt_node",
-      "nav2_initial_pose_received_condition_bt_node",
-      "nav2_goal_updated_condition_bt_node",
-      "nav2_globally_updated_goal_condition_bt_node",
-      "nav2_is_path_valid_condition_bt_node",
-      "nav2_are_error_codes_active_condition_bt_node",
-      "nav2_would_a_controller_recovery_help_condition_bt_node",
-      "nav2_would_a_planner_recovery_help_condition_bt_node",
-      "nav2_would_a_smoother_recovery_help_condition_bt_node",
-      "nav2_reinitialize_global_localization_service_bt_node",
-      "nav2_rate_controller_bt_node",
-      "nav2_distance_controller_bt_node",
-      "nav2_speed_controller_bt_node",
-      "nav2_truncate_path_action_bt_node",
-      "nav2_truncate_path_local_action_bt_node",
-      "nav2_goal_updater_node_bt_node",
-      "nav2_recovery_node_bt_node",
-      "nav2_pipeline_sequence_bt_node",
-      "nav2_round_robin_node_bt_node",
-      "nav2_transform_available_condition_bt_node",
-      "nav2_time_expired_condition_bt_node",
-      "nav2_path_expiring_timer_condition",
-      "nav2_distance_traveled_condition_bt_node",
-      "nav2_single_trigger_bt_node",
-      "nav2_is_battery_low_condition_bt_node",
-      "nav2_navigate_through_poses_action_bt_node",
-      "nav2_navigate_to_pose_action_bt_node",
-      "nav2_remove_passed_goals_action_bt_node",
-      "nav2_planner_selector_bt_node",
-      "nav2_controller_selector_bt_node",
-      "nav2_goal_checker_selector_bt_node",
-      "nav2_controller_cancel_bt_node",
-      "nav2_path_longer_on_approach_bt_node",
-      "nav2_assisted_teleop_cancel_bt_node",
-      "nav2_wait_cancel_bt_node",
-      "nav2_spin_cancel_bt_node",
-      "nav2_back_up_cancel_bt_node",
-      "nav2_drive_on_heading_cancel_bt_node",
-      "nav2_goal_updated_controller_bt_node"
-    };
+    nav2_util::Tokens plugin_libs = nav2_util::split(nav2::details::BT_BUILTIN_PLUGINS, ';');
+
     for (const auto & p : plugin_libs) {
       factory_.registerFromPlugin(BT::SharedLibrary::getOSName(p));
     }
@@ -125,23 +81,25 @@ public:
       return false;
     }
 
-    auto xml_string = std::string(
-      std::istreambuf_iterator<char>(xml_file),
-      std::istreambuf_iterator<char>());
-
+    std::stringstream buffer;
+    buffer << xml_file.rdbuf();
+    xml_file.close();
+    std::string xml_string = buffer.str();
     // Create the blackboard that will be shared by all of the nodes in the tree
     blackboard = BT::Blackboard::create();
 
     // Put items on the blackboard
-    blackboard->set<rclcpp::Node::SharedPtr>("node", node_);  // NOLINT
+    blackboard->set("node", node_);  // NOLINT
     blackboard->set<std::chrono::milliseconds>(
       "server_timeout", std::chrono::milliseconds(20));  // NOLINT
     blackboard->set<std::chrono::milliseconds>(
       "bt_loop_duration", std::chrono::milliseconds(10));  // NOLINT
-    blackboard->set<std::shared_ptr<tf2_ros::Buffer>>("tf_buffer", tf_);  // NOLINT
-    blackboard->set<bool>("initial_pose_received", false);  // NOLINT
-    blackboard->set<int>("number_recoveries", 0);  // NOLINT
-    blackboard->set<std::shared_ptr<nav2_util::OdomSmoother>>("odom_smoother", odom_smoother_);  // NOLINT
+    blackboard->set<std::chrono::milliseconds>(
+      "wait_for_service_timeout", std::chrono::milliseconds(1000));  // NOLINT
+    blackboard->set("tf_buffer", tf_);  // NOLINT
+    blackboard->set("initial_pose_received", false);  // NOLINT
+    blackboard->set("number_recoveries", 0);  // NOLINT
+    blackboard->set("odom_smoother", odom_smoother_);  // NOLINT
 
     // set dummy goal on blackboard
     geometry_msgs::msg::PoseStamped goal;
@@ -155,7 +113,7 @@ public:
     goal.pose.orientation.z = 0.0;
     goal.pose.orientation.w = 1.0;
 
-    blackboard->set<geometry_msgs::msg::PoseStamped>("goal", goal);  // NOLINT
+    blackboard->set("goal", goal);  // NOLINT
 
     // Create the Behavior Tree from the XML input
     try {
@@ -184,7 +142,7 @@ public:
   BT::Tree tree;
 
 private:
-  rclcpp::Node::SharedPtr node_;
+  nav2::LifecycleNode::SharedPtr node_;
 
   std::shared_ptr<tf2_ros::Buffer> tf_;
   std::shared_ptr<tf2_ros::TransformListener> tf_listener_;
@@ -238,12 +196,12 @@ std::shared_ptr<BehaviorTreeHandler> BehaviorTreeTestFixture::bt_handler = nullp
 
 TEST_F(BehaviorTreeTestFixture, TestBTXMLFiles)
 {
-  fs::path root = ament_index_cpp::get_package_share_directory("nav2_bt_navigator");
+  std::filesystem::path root = ament_index_cpp::get_package_share_directory("nav2_bt_navigator");
   root /= "behavior_trees/";
 
-  if (boost::filesystem::exists(root) && boost::filesystem::is_directory(root)) {
-    for (auto const & entry : boost::filesystem::recursive_directory_iterator(root)) {
-      if (boost::filesystem::is_regular_file(entry) && entry.path().extension() == ".xml") {
+  if (std::filesystem::exists(root) && std::filesystem::is_directory(root)) {
+    for (auto const & entry : std::filesystem::recursive_directory_iterator(root)) {
+      if (std::filesystem::is_regular_file(entry) && entry.path().extension() == ".xml") {
         std::cout << entry.path().string() << std::endl;
         EXPECT_EQ(bt_handler->loadBehaviorTree(entry.path().string()), true);
       }
@@ -260,7 +218,7 @@ TEST_F(BehaviorTreeTestFixture, TestBTXMLFiles)
 TEST_F(BehaviorTreeTestFixture, TestAllSuccess)
 {
   // Load behavior tree from file
-  fs::path bt_file = ament_index_cpp::get_package_share_directory("nav2_bt_navigator");
+  std::filesystem::path bt_file = ament_index_cpp::get_package_share_directory("nav2_bt_navigator");
   bt_file /= "behavior_trees/";
   bt_file /= "navigate_to_pose_w_replanning_and_recovery.xml";
   EXPECT_EQ(bt_handler->loadBehaviorTree(bt_file.string()), true);
@@ -268,7 +226,7 @@ TEST_F(BehaviorTreeTestFixture, TestAllSuccess)
   BT::NodeStatus result = BT::NodeStatus::RUNNING;
 
   while (result == BT::NodeStatus::RUNNING) {
-    result = bt_handler->tree.tickRoot();
+    result = bt_handler->tree.tickOnce();
     std::this_thread::sleep_for(10ms);
   }
 
@@ -277,7 +235,12 @@ TEST_F(BehaviorTreeTestFixture, TestAllSuccess)
 
   // Goal count should be 1 since only one goal is sent to ComputePathToPose and FollowPath servers
   EXPECT_EQ(server_handler->compute_path_to_pose_server->getGoalCount(), 1);
+  EXPECT_EQ(server_handler->compute_path_to_pose_server->getResult()->error_code, 0);
+  EXPECT_EQ(server_handler->compute_path_to_pose_server->getResult()->error_msg, "");
+
   EXPECT_EQ(server_handler->follow_path_server->getGoalCount(), 1);
+  EXPECT_EQ(server_handler->follow_path_server->getResult()->error_code, 0);
+  EXPECT_EQ(server_handler->follow_path_server->getResult()->error_msg, "");
 
   // Goal count should be 0 since no goal is sent to all other servers
   EXPECT_EQ(server_handler->spin_server->getGoalCount(), 0);
@@ -302,7 +265,7 @@ TEST_F(BehaviorTreeTestFixture, TestAllSuccess)
 TEST_F(BehaviorTreeTestFixture, TestAllFailure)
 {
   // Load behavior tree from file
-  fs::path bt_file = ament_index_cpp::get_package_share_directory("nav2_bt_navigator");
+  std::filesystem::path bt_file = ament_index_cpp::get_package_share_directory("nav2_bt_navigator");
   bt_file /= "behavior_trees/";
   bt_file /= "navigate_to_pose_w_replanning_and_recovery.xml";
   EXPECT_EQ(bt_handler->loadBehaviorTree(bt_file.string()), true);
@@ -319,7 +282,7 @@ TEST_F(BehaviorTreeTestFixture, TestAllFailure)
   BT::NodeStatus result = BT::NodeStatus::RUNNING;
 
   while (result == BT::NodeStatus::RUNNING) {
-    result = bt_handler->tree.tickRoot();
+    result = bt_handler->tree.tickOnce();
     std::this_thread::sleep_for(10ms);
   }
 
@@ -328,9 +291,13 @@ TEST_F(BehaviorTreeTestFixture, TestAllFailure)
 
   // Goal count should be 2 since only two goals are sent to ComputePathToPose
   EXPECT_EQ(server_handler->compute_path_to_pose_server->getGoalCount(), 14);
+  EXPECT_EQ(server_handler->compute_path_to_pose_server->getResult()->error_code, 207);
+  EXPECT_EQ(server_handler->compute_path_to_pose_server->getResult()->error_msg, "Timeout");
 
   // Goal count should be 0 since no goal is sent to FollowPath action server
   EXPECT_EQ(server_handler->follow_path_server->getGoalCount(), 0);
+  EXPECT_EQ(server_handler->follow_path_server->getResult()->error_code, 0);
+  EXPECT_EQ(server_handler->follow_path_server->getResult()->error_msg, "");
 
   EXPECT_EQ(server_handler->spin_server->getGoalCount(), 5);
   EXPECT_EQ(server_handler->wait_server->getGoalCount(), 5);
@@ -354,7 +321,7 @@ TEST_F(BehaviorTreeTestFixture, TestAllFailure)
 TEST_F(BehaviorTreeTestFixture, TestNavigateSubtreeRecoveries)
 {
   // Load behavior tree from file
-  fs::path bt_file = ament_index_cpp::get_package_share_directory("nav2_bt_navigator");
+  std::filesystem::path bt_file = ament_index_cpp::get_package_share_directory("nav2_bt_navigator");
   bt_file /= "behavior_trees/";
   bt_file /= "navigate_to_pose_w_replanning_and_recovery.xml";
   EXPECT_EQ(bt_handler->loadBehaviorTree(bt_file.string()), true);
@@ -368,7 +335,7 @@ TEST_F(BehaviorTreeTestFixture, TestNavigateSubtreeRecoveries)
   BT::NodeStatus result = BT::NodeStatus::RUNNING;
 
   while (result == BT::NodeStatus::RUNNING) {
-    result = bt_handler->tree.tickRoot();
+    result = bt_handler->tree.tickOnce();
     std::this_thread::sleep_for(10ms);
   }
 
@@ -377,7 +344,12 @@ TEST_F(BehaviorTreeTestFixture, TestNavigateSubtreeRecoveries)
 
   // Goal count should be 2 since only two goals were sent to ComputePathToPose and FollowPath
   EXPECT_EQ(server_handler->compute_path_to_pose_server->getGoalCount(), 2);
+  EXPECT_EQ(server_handler->compute_path_to_pose_server->getResult()->error_code, 0);
+  EXPECT_EQ(server_handler->compute_path_to_pose_server->getResult()->error_msg, "");
+
   EXPECT_EQ(server_handler->follow_path_server->getGoalCount(), 2);
+  EXPECT_EQ(server_handler->follow_path_server->getResult()->error_code, 0);
+  EXPECT_EQ(server_handler->follow_path_server->getResult()->error_msg, "");
 
   // Navigate subtree recovery services are called once each
   EXPECT_EQ(server_handler->clear_local_costmap_server->getRequestCount(), 1);
@@ -408,7 +380,7 @@ TEST_F(BehaviorTreeTestFixture, TestNavigateSubtreeRecoveries)
 TEST_F(BehaviorTreeTestFixture, TestNavigateRecoverySimple)
 {
   // Load behavior tree from file
-  fs::path bt_file = ament_index_cpp::get_package_share_directory("nav2_bt_navigator");
+  std::filesystem::path bt_file = ament_index_cpp::get_package_share_directory("nav2_bt_navigator");
   bt_file /= "behavior_trees/";
   bt_file /= "navigate_to_pose_w_replanning_and_recovery.xml";
   EXPECT_EQ(bt_handler->loadBehaviorTree(bt_file.string()), true);
@@ -426,7 +398,7 @@ TEST_F(BehaviorTreeTestFixture, TestNavigateRecoverySimple)
   BT::NodeStatus result = BT::NodeStatus::RUNNING;
 
   while (result == BT::NodeStatus::RUNNING) {
-    result = bt_handler->tree.tickRoot();
+    result = bt_handler->tree.tickOnce();
     std::this_thread::sleep_for(10ms);
   }
 
@@ -435,9 +407,13 @@ TEST_F(BehaviorTreeTestFixture, TestNavigateRecoverySimple)
 
   // FollowPath is called 4 times
   EXPECT_EQ(server_handler->follow_path_server->getGoalCount(), 4);
+  EXPECT_EQ(server_handler->follow_path_server->getResult()->error_code, 0);
+  EXPECT_EQ(server_handler->follow_path_server->getResult()->error_msg, "");
 
   // ComputePathToPose is called 3 times
   EXPECT_EQ(server_handler->compute_path_to_pose_server->getGoalCount(), 3);
+  EXPECT_EQ(server_handler->compute_path_to_pose_server->getResult()->error_code, 0);
+  EXPECT_EQ(server_handler->compute_path_to_pose_server->getResult()->error_msg, "");
 
   // Local costmap is cleared 3 times
   EXPECT_EQ(server_handler->clear_local_costmap_server->getRequestCount(), 3);
@@ -502,7 +478,7 @@ TEST_F(BehaviorTreeTestFixture, TestNavigateRecoverySimple)
 TEST_F(BehaviorTreeTestFixture, TestNavigateRecoveryComplex)
 {
   // Load behavior tree from file
-  fs::path bt_file = ament_index_cpp::get_package_share_directory("nav2_bt_navigator");
+  std::filesystem::path bt_file = ament_index_cpp::get_package_share_directory("nav2_bt_navigator");
   bt_file /= "behavior_trees/";
   bt_file /= "navigate_to_pose_w_replanning_and_recovery.xml";
   EXPECT_EQ(bt_handler->loadBehaviorTree(bt_file.string()), true);
@@ -520,7 +496,7 @@ TEST_F(BehaviorTreeTestFixture, TestNavigateRecoveryComplex)
   BT::NodeStatus result = BT::NodeStatus::RUNNING;
 
   while (result == BT::NodeStatus::RUNNING) {
-    result = bt_handler->tree.tickRoot();
+    result = bt_handler->tree.tickOnce();
     std::this_thread::sleep_for(10ms);
   }
 
@@ -529,9 +505,13 @@ TEST_F(BehaviorTreeTestFixture, TestNavigateRecoveryComplex)
 
   // ComputePathToPose is called 12 times
   EXPECT_EQ(server_handler->compute_path_to_pose_server->getGoalCount(), 7);
+  EXPECT_EQ(server_handler->compute_path_to_pose_server->getResult()->error_code, 0);
+  EXPECT_EQ(server_handler->compute_path_to_pose_server->getResult()->error_msg, "");
 
   // FollowPath is called 4 times
   EXPECT_EQ(server_handler->follow_path_server->getGoalCount(), 14);
+  EXPECT_EQ(server_handler->follow_path_server->getResult()->error_code, 106);
+  EXPECT_EQ(server_handler->follow_path_server->getResult()->error_msg, "No valid control");
 
   // Local costmap is cleared 5 times
   EXPECT_EQ(server_handler->clear_local_costmap_server->getRequestCount(), 9);
@@ -566,7 +546,7 @@ TEST_F(BehaviorTreeTestFixture, TestNavigateRecoveryComplex)
 TEST_F(BehaviorTreeTestFixture, TestRecoverySubtreeGoalUpdated)
 {
   // Load behavior tree from file
-  fs::path bt_file = ament_index_cpp::get_package_share_directory("nav2_bt_navigator");
+  std::filesystem::path bt_file = ament_index_cpp::get_package_share_directory("nav2_bt_navigator");
   bt_file /= "behavior_trees/";
   bt_file /= "navigate_to_pose_w_replanning_and_recovery.xml";
   EXPECT_EQ(bt_handler->loadBehaviorTree(bt_file.string()), true);
@@ -584,7 +564,7 @@ TEST_F(BehaviorTreeTestFixture, TestRecoverySubtreeGoalUpdated)
   BT::NodeStatus result = BT::NodeStatus::RUNNING;
 
   while (result == BT::NodeStatus::RUNNING) {
-    result = bt_handler->tree.tickRoot();
+    result = bt_handler->tree.tickOnce();
 
     // Update goal on blackboard after Spin has been triggered once
     // to simulate a goal update during a recovery action
@@ -597,7 +577,7 @@ TEST_F(BehaviorTreeTestFixture, TestRecoverySubtreeGoalUpdated)
       goal.pose.orientation.y = 0.0;
       goal.pose.orientation.z = 0.0;
       goal.pose.orientation.w = 1.0;
-      bt_handler->blackboard->set<geometry_msgs::msg::PoseStamped>("goal", goal);  // NOLINT
+      bt_handler->blackboard->set("goal", goal);  // NOLINT
     }
 
     std::this_thread::sleep_for(10ms);
@@ -608,9 +588,13 @@ TEST_F(BehaviorTreeTestFixture, TestRecoverySubtreeGoalUpdated)
 
   // ComputePathToPose is called 4 times
   EXPECT_EQ(server_handler->compute_path_to_pose_server->getGoalCount(), 3);
+  EXPECT_EQ(server_handler->compute_path_to_pose_server->getResult()->error_code, 0);
+  EXPECT_EQ(server_handler->compute_path_to_pose_server->getResult()->error_msg, "");
 
   // FollowPath is called 3 times
   EXPECT_EQ(server_handler->follow_path_server->getGoalCount(), 5);
+  EXPECT_EQ(server_handler->follow_path_server->getResult()->error_code, 0);
+  EXPECT_EQ(server_handler->follow_path_server->getResult()->error_msg, "");
 
   // Local costmap is cleared 2 times
   EXPECT_EQ(server_handler->clear_local_costmap_server->getRequestCount(), 3);

@@ -15,6 +15,8 @@
 #ifndef NAV2_BEHAVIOR_TREE__BT_ACTION_SERVER_HPP_
 #define NAV2_BEHAVIOR_TREE__BT_ACTION_SERVER_HPP_
 
+#include <chrono>
+#include <functional>
 #include <memory>
 #include <string>
 #include <vector>
@@ -22,8 +24,8 @@
 #include "geometry_msgs/msg/pose_stamped.hpp"
 #include "nav2_behavior_tree/behavior_tree_engine.hpp"
 #include "nav2_behavior_tree/ros_topic_logger.hpp"
-#include "nav2_util/lifecycle_node.hpp"
-#include "nav2_util/simple_action_server.hpp"
+#include "nav2_ros_common/lifecycle_node.hpp"
+#include "nav2_ros_common/simple_action_server.hpp"
 
 namespace nav2_behavior_tree
 {
@@ -31,11 +33,11 @@ namespace nav2_behavior_tree
  * @class nav2_behavior_tree::BtActionServer
  * @brief An action server that uses behavior tree to execute an action
  */
-template<class ActionT>
+template<class ActionT, class NodeT>
 class BtActionServer
 {
 public:
-  using ActionServer = nav2_util::SimpleActionServer<ActionT>;
+  using ActionServer = nav2::SimpleActionServer<ActionT>;
 
   typedef std::function<bool (typename ActionT::Goal::ConstSharedPtr)> OnGoalReceivedCallback;
   typedef std::function<void ()> OnLoopCallback;
@@ -47,7 +49,7 @@ public:
    * @brief A constructor for nav2_behavior_tree::BtActionServer class
    */
   explicit BtActionServer(
-    const rclcpp_lifecycle::LifecycleNode::WeakPtr & parent,
+    const typename NodeT::WeakPtr & parent,
     const std::string & action_name,
     const std::vector<std::string> & plugin_lib_names,
     const std::string & default_bt_xml_filename,
@@ -86,6 +88,13 @@ public:
    * @return bool true on SUCCESS and false on FAILURE
    */
   bool on_cleanup();
+
+  /**
+   * @brief Enable (or disable) Groot2 monitoring of BT
+   * @param enable Groot2 monitoring
+   * @param server_port Groot2 Server port, first of the pair (server_port, publisher_port)
+   */
+  void setGrootMonitoring(const bool enable, const unsigned server_port);
 
   /**
    * @brief Replace current BT with another one
@@ -177,11 +186,31 @@ public:
   /**
    * @brief Function to halt the current tree. It will interrupt the execution of RUNNING nodes
    * by calling their halt() implementation (only for Async nodes that may return RUNNING)
+   * This should already done for all the exit states of the action but preemption
    */
   void haltTree()
   {
-    tree_.rootNode()->halt();
+    tree_.haltTree();
   }
+
+  /**
+   * @brief Set internal error code and message
+   * @param error_code the internal error code
+   * @param error_msg the internal error message
+   */
+  void setInternalError(uint16_t error_code, const std::string & error_msg);
+
+  /**
+   * @brief reset internal error code and message
+   */
+  void resetInternalError(void);
+
+  /**
+   * @brief populate result with internal error code and error_msg if not NONE
+   * @param result the action server result to be updated
+   * @return bool action server result was changed
+   */
+  bool populateInternalError(typename std::shared_ptr<typename ActionT::Result> result);
 
 protected:
   /**
@@ -196,11 +225,16 @@ protected:
    */
   void populateErrorCode(typename std::shared_ptr<typename ActionT::Result> result);
 
+  /**
+   * @brief Setting BT error codes to success. Used to clean blackboard between different BT runs
+   */
+  void cleanErrorCodes();
+
   // Action name
   std::string action_name_;
 
   // Our action server implements the template action
-  std::shared_ptr<ActionServer> action_server_;
+  typename ActionServer::SharedPtr action_server_;
 
   // Behavior Tree to be executed when goal is received
   BT::Tree tree_;
@@ -208,7 +242,7 @@ protected:
   // The blackboard shared by all of the nodes in the tree
   BT::Blackboard::Ptr blackboard_;
 
-  // The XML file that cointains the Behavior Tree to create
+  // The XML file that contains the Behavior Tree to create
   std::string current_bt_xml_filename_;
   std::string default_bt_xml_filename_;
 
@@ -218,14 +252,14 @@ protected:
   // Libraries to pull plugins (BT Nodes) from
   std::vector<std::string> plugin_lib_names_;
 
-  // Error code id names
-  std::vector<std::string> error_code_names_;
+  // Error code name prefixes
+  std::vector<std::string> error_code_name_prefixes_;
 
   // A regular, non-spinning ROS node that we can use for calls to the action client
-  rclcpp::Node::SharedPtr client_node_;
+  nav2::LifecycleNode::SharedPtr client_node_;
 
   // Parent node
-  rclcpp_lifecycle::LifecycleNode::WeakPtr node_;
+  typename NodeT::WeakPtr node_;
 
   // Clock
   rclcpp::Clock::SharedPtr clock_;
@@ -242,11 +276,25 @@ protected:
   // Default timeout value while waiting for response from a server
   std::chrono::milliseconds default_server_timeout_;
 
+  // The timeout value for waiting for a service to response
+  std::chrono::milliseconds wait_for_service_timeout_;
+
+  // should the BT be reloaded even if the same xml filename is requested?
+  bool always_reload_bt_xml_ = false;
+
+  // Parameters for Groot2 monitoring
+  bool enable_groot_monitoring_ = false;
+  int groot_server_port_ = 1667;
+
   // User-provided callbacks
   OnGoalReceivedCallback on_goal_received_callback_;
   OnLoopCallback on_loop_callback_;
   OnPreemptCallback on_preempt_callback_;
   OnCompletionCallback on_completion_callback_;
+
+  // internal error tracking (IOW not behaviorTree blackboard errors)
+  uint16_t internal_error_code_;
+  std::string internal_error_msg_;
 };
 
 }  // namespace nav2_behavior_tree

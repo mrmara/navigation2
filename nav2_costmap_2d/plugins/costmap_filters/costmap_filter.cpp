@@ -64,7 +64,7 @@ CostmapFilter::~CostmapFilter()
 
 void CostmapFilter::onInitialize()
 {
-  rclcpp_lifecycle::LifecycleNode::SharedPtr node = node_.lock();
+  nav2::LifecycleNode::SharedPtr node = node_.lock();
   if (!node) {
     throw std::runtime_error{"Failed to lock node"};
   }
@@ -78,16 +78,15 @@ void CostmapFilter::onInitialize()
     // Get parameters
     node->get_parameter(name_ + "." + "enabled", enabled_);
     filter_info_topic_ = node->get_parameter(name_ + "." + "filter_info_topic").as_string();
-    double transform_tolerance;
+    double transform_tolerance {};
     node->get_parameter(name_ + "." + "transform_tolerance", transform_tolerance);
     transform_tolerance_ = tf2::durationFromSec(transform_tolerance);
 
     // Costmap Filter enabling service
     enable_service_ = node->create_service<std_srvs::srv::SetBool>(
       name_ + "/toggle_filter",
-      std::bind(
-        &CostmapFilter::enableCallback, this,
-        std::placeholders::_1, std::placeholders::_2, std::placeholders::_3));
+      std::bind(&CostmapFilter::enableCallback, this, std::placeholders::_1,
+        std::placeholders::_2, std::placeholders::_3));
   } catch (const std::exception & ex) {
     RCLCPP_ERROR(logger_, "Parameter problem: %s", ex.what());
     throw ex;

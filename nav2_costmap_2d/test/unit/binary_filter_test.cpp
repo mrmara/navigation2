@@ -23,7 +23,7 @@
 #include <stdexcept>
 
 #include "rclcpp/rclcpp.hpp"
-#include "nav2_util/lifecycle_node.hpp"
+#include "nav2_ros_common/lifecycle_node.hpp"
 #include "tf2_ros/buffer.h"
 #include "tf2_ros/transform_listener.h"
 #include "tf2_ros/transform_broadcaster.h"
@@ -137,7 +137,7 @@ public:
   }
 
 private:
-  rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr subscriber_;
+  nav2::Subscription<std_msgs::msg::Bool>::SharedPtr subscriber_;
   std_msgs::msg::Bool::SharedPtr msg_;
   bool binary_state_updated_;
 };  // BinaryStateSubscriber
@@ -248,7 +248,7 @@ private:
   const unsigned int height_ = 11;
   const double resolution_ = 1.0;
 
-  nav2_util::LifecycleNode::SharedPtr node_;
+  nav2::LifecycleNode::SharedPtr node_;
 
   std::shared_ptr<tf2_ros::Buffer> tf_buffer_;
   std::shared_ptr<tf2_ros::TransformListener> tf_listener_;
@@ -353,7 +353,7 @@ void TestNode::setDefaultState(bool default_state)
 
 bool TestNode::createBinaryFilter(const std::string & global_frame, double flip_threshold)
 {
-  node_ = std::make_shared<nav2_util::LifecycleNode>("test_node");
+  node_ = std::make_shared<nav2::LifecycleNode>("test_node");
   tf_buffer_ = std::make_shared<tf2_ros::Buffer>(node_->get_clock());
   tf_buffer_->setUsingDedicatedThread(true);  // One-thread broadcasting-listening model
   tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_);
@@ -675,7 +675,7 @@ void TestNode::testResetFilter()
   binary_state = waitBinaryState();
   verifyBinaryState(getSign(pose.x, pose.y, base, multiplier, flip_threshold), binary_state);
 
-  // Reset binary filter and check its state was resetted to default
+  // Reset binary filter and check its state was reset to default
   binary_filter_->resetFilter();
   binary_state = waitBinaryState();
   ASSERT_TRUE(binary_state != nullptr);
@@ -703,7 +703,7 @@ void TestNode::reset()
 
 TEST_F(TestNode, testBinaryState)
 {
-  // Initilize test system
+  // Initialize test system
   createMaps("map");
   publishMaps(nav2_costmap_2d::BINARY_FILTER, MASK_TOPIC, 0.0, 1.0);
   ASSERT_TRUE(createBinaryFilter("map", 10.0));
@@ -718,7 +718,7 @@ TEST_F(TestNode, testBinaryState)
 
 TEST_F(TestNode, testBinaryStateScaled)
 {
-  // Initilize test system
+  // Initialize test system
   createMaps("map");
   publishMaps(nav2_costmap_2d::BINARY_FILTER, MASK_TOPIC, 100.0, -1.0);
   ASSERT_TRUE(createBinaryFilter("map", 35.0));
@@ -733,7 +733,7 @@ TEST_F(TestNode, testBinaryStateScaled)
 
 TEST_F(TestNode, testInvertedBinaryState)
 {
-  // Initilize test system
+  // Initialize test system
   createMaps("map");
   publishMaps(nav2_costmap_2d::BINARY_FILTER, MASK_TOPIC, 0.0, 1.0);
   setDefaultState(true);
@@ -749,7 +749,7 @@ TEST_F(TestNode, testInvertedBinaryState)
 
 TEST_F(TestNode, testOutOfBounds)
 {
-  // Initilize test system
+  // Initialize test system
   createMaps("map");
   publishMaps(nav2_costmap_2d::BINARY_FILTER, MASK_TOPIC, 0.0, 1.0);
   ASSERT_TRUE(createBinaryFilter("map", 10.0));
@@ -764,7 +764,7 @@ TEST_F(TestNode, testOutOfBounds)
 
 TEST_F(TestNode, testInfoRePublish)
 {
-  // Initilize test system
+  // Initialize test system
   createMaps("map");
   // Publish Info with incorrect dummy mask topic
   publishMaps(nav2_costmap_2d::BINARY_FILTER, "dummy_topic", 0.0, 1.0);
@@ -805,7 +805,7 @@ TEST_F(TestNode, testMaskRePublish)
 
 TEST_F(TestNode, testIncorrectFilterType)
 {
-  // Initilize test system
+  // Initialize test system
   createMaps("map");
   publishMaps(INCORRECT_TYPE, MASK_TOPIC, 0.0, 1.0);
   ASSERT_FALSE(createBinaryFilter("map", 10.0));
@@ -817,7 +817,7 @@ TEST_F(TestNode, testIncorrectFilterType)
 
 TEST_F(TestNode, testDifferentFrame)
 {
-  // Initilize test system
+  // Initialize test system
   createMaps("map");
   publishMaps(nav2_costmap_2d::BINARY_FILTER, MASK_TOPIC, 0.0, 1.0);
   ASSERT_TRUE(createBinaryFilter("odom", 10.0));
@@ -833,7 +833,7 @@ TEST_F(TestNode, testDifferentFrame)
 
 TEST_F(TestNode, testIncorrectFrame)
 {
-  // Initilize test system
+  // Initialize test system
   createMaps("map");
   publishMaps(nav2_costmap_2d::BINARY_FILTER, MASK_TOPIC, 0.0, 1.0);
   ASSERT_TRUE(createBinaryFilter("odom", 10.0));
@@ -849,7 +849,7 @@ TEST_F(TestNode, testIncorrectFrame)
 
 TEST_F(TestNode, testResetState)
 {
-  // Initilize test system
+  // Initialize test system
   createMaps("map");
   publishMaps(nav2_costmap_2d::BINARY_FILTER, MASK_TOPIC, 0.0, 1.0);
   ASSERT_TRUE(createBinaryFilter("map", 10.0));

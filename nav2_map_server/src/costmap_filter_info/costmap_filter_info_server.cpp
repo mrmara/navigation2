@@ -24,8 +24,8 @@
 namespace nav2_map_server
 {
 
-CostmapFilterInfoServer::CostmapFilterInfoServer()
-: nav2_util::LifecycleNode("costmap_filter_info_server")
+CostmapFilterInfoServer::CostmapFilterInfoServer(const rclcpp::NodeOptions & options)
+: nav2::LifecycleNode("costmap_filter_info_server", "", options)
 {
   declare_parameter("filter_info_topic", "costmap_filter_info");
   declare_parameter("type", 0);
@@ -38,7 +38,7 @@ CostmapFilterInfoServer::~CostmapFilterInfoServer()
 {
 }
 
-nav2_util::CallbackReturn
+nav2::CallbackReturn
 CostmapFilterInfoServer::on_configure(const rclcpp_lifecycle::State & /*state*/)
 {
   RCLCPP_INFO(get_logger(), "Configuring");
@@ -46,7 +46,7 @@ CostmapFilterInfoServer::on_configure(const rclcpp_lifecycle::State & /*state*/)
   std::string filter_info_topic = get_parameter("filter_info_topic").as_string();
 
   publisher_ = this->create_publisher<nav2_msgs::msg::CostmapFilterInfo>(
-    filter_info_topic, rclcpp::QoS(rclcpp::KeepLast(1)).transient_local().reliable());
+    filter_info_topic, nav2::qos::LatchedPublisherQoS());
 
   msg_ = nav2_msgs::msg::CostmapFilterInfo();
   msg_.header.frame_id = "";
@@ -56,10 +56,10 @@ CostmapFilterInfoServer::on_configure(const rclcpp_lifecycle::State & /*state*/)
   msg_.base = static_cast<float>(get_parameter("base").as_double());
   msg_.multiplier = static_cast<float>(get_parameter("multiplier").as_double());
 
-  return nav2_util::CallbackReturn::SUCCESS;
+  return nav2::CallbackReturn::SUCCESS;
 }
 
-nav2_util::CallbackReturn
+nav2::CallbackReturn
 CostmapFilterInfoServer::on_activate(const rclcpp_lifecycle::State & /*state*/)
 {
   RCLCPP_INFO(get_logger(), "Activating");
@@ -71,10 +71,10 @@ CostmapFilterInfoServer::on_activate(const rclcpp_lifecycle::State & /*state*/)
   // create bond connection
   createBond();
 
-  return nav2_util::CallbackReturn::SUCCESS;
+  return nav2::CallbackReturn::SUCCESS;
 }
 
-nav2_util::CallbackReturn
+nav2::CallbackReturn
 CostmapFilterInfoServer::on_deactivate(const rclcpp_lifecycle::State & /*state*/)
 {
   RCLCPP_INFO(get_logger(), "Deactivating");
@@ -84,25 +84,32 @@ CostmapFilterInfoServer::on_deactivate(const rclcpp_lifecycle::State & /*state*/
   // destroy bond connection
   destroyBond();
 
-  return nav2_util::CallbackReturn::SUCCESS;
+  return nav2::CallbackReturn::SUCCESS;
 }
 
-nav2_util::CallbackReturn
+nav2::CallbackReturn
 CostmapFilterInfoServer::on_cleanup(const rclcpp_lifecycle::State & /*state*/)
 {
   RCLCPP_INFO(get_logger(), "Cleaning up");
 
   publisher_.reset();
 
-  return nav2_util::CallbackReturn::SUCCESS;
+  return nav2::CallbackReturn::SUCCESS;
 }
 
-nav2_util::CallbackReturn
+nav2::CallbackReturn
 CostmapFilterInfoServer::on_shutdown(const rclcpp_lifecycle::State & /*state*/)
 {
   RCLCPP_INFO(get_logger(), "Shutting down");
 
-  return nav2_util::CallbackReturn::SUCCESS;
+  return nav2::CallbackReturn::SUCCESS;
 }
 
 }  // namespace nav2_map_server
+
+#include "rclcpp_components/register_node_macro.hpp"
+
+// Register the component with class_loader.
+// This acts as a sort of entry point, allowing the component to be discoverable when its library
+// is being loaded into a running process.
+RCLCPP_COMPONENTS_REGISTER_NODE(nav2_map_server::CostmapFilterInfoServer)

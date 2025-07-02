@@ -46,14 +46,14 @@
 #include "nav_2d_utils/conversions.hpp"
 #include "nav_2d_utils/tf_help.hpp"
 #include "nav2_util/geometry_utils.hpp"
-#include "nav2_util/lifecycle_node.hpp"
-#include "nav2_util/node_utils.hpp"
+#include "nav2_ros_common/lifecycle_node.hpp"
+#include "nav2_ros_common/node_utils.hpp"
 #include "nav2_core/controller_exceptions.hpp"
 #include "pluginlib/class_list_macros.hpp"
 #include "nav_msgs/msg/path.hpp"
 #include "geometry_msgs/msg/twist_stamped.hpp"
 
-using nav2_util::declare_parameter_if_not_declared;
+using nav2::declare_parameter_if_not_declared;
 using nav2_util::geometry_utils::euclidean_distance;
 
 namespace dwb_core
@@ -66,7 +66,7 @@ DWBLocalPlanner::DWBLocalPlanner()
 }
 
 void DWBLocalPlanner::configure(
-  const rclcpp_lifecycle::LifecycleNode::WeakPtr & parent,
+  const nav2::LifecycleNode::WeakPtr & parent,
   std::string name, std::shared_ptr<tf2_ros::Buffer> tf,
   std::shared_ptr<nav2_costmap_2d::Costmap2DROS> costmap_ros)
 {
@@ -514,7 +514,7 @@ DWBLocalPlanner::transformGlobalPlan(
   auto prune_point = nav2_util::geometry_utils::first_after_integrated_distance(
     global_plan_.poses.begin(), global_plan_.poses.end(), forward_prune_distance_);
 
-  // Find the first pose in the plan (upto prune_point) that's less than transform_start_threshold
+  // Find the first pose in the plan (up to prune_point) that's less than transform_start_threshold
   // from the robot.
   auto transformation_begin = std::find_if(
     begin(global_plan_.poses), prune_point,
@@ -526,8 +526,8 @@ DWBLocalPlanner::transformGlobalPlan(
   // from the robot using integrated distance
   auto transformation_end = std::find_if(
     transformation_begin, global_plan_.poses.end(),
-    [&](const auto & pose) {
-      return euclidean_distance(pose, robot_pose.pose) > transform_end_threshold;
+    [&](const auto & global_plan_pose) {
+      return euclidean_distance(global_plan_pose, robot_pose.pose) > transform_end_threshold;
     });
 
   // Transform the near part of the global plan into the robot's frame of reference.

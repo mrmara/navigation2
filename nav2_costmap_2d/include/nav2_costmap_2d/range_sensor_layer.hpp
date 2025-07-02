@@ -42,7 +42,6 @@
 #include <mutex>
 
 #include "map_msgs/msg/occupancy_grid_update.hpp"
-#include "message_filters/subscriber.h"
 #include "nav2_costmap_2d/costmap_layer.hpp"
 #include "nav2_costmap_2d/layered_costmap.hpp"
 #include "nav_msgs/msg/occupancy_grid.hpp"
@@ -128,7 +127,7 @@ public:
    */
   void bufferIncomingRangeMsg(const sensor_msgs::msg::Range::SharedPtr range_message);
 
-private:
+protected:
   /**
    * @brief Processes all sensors into the costmap buffered from callbacks
    */
@@ -214,7 +213,7 @@ private:
   double no_readings_timeout_;
   rclcpp::Time last_reading_time_;
   unsigned int buffered_readings_;
-  std::vector<rclcpp::Subscription<sensor_msgs::msg::Range>::SharedPtr> range_subs_;
+  std::vector<nav2::Subscription<sensor_msgs::msg::Range>::SharedPtr> range_subs_;
   double min_x_, min_y_, max_x_, max_y_;
 
   /**

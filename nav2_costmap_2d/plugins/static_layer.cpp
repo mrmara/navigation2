@@ -43,8 +43,9 @@
 #include <string>
 
 #include "pluginlib/class_list_macros.hpp"
-#include "tf2/convert.h"
+#include "tf2/convert.hpp"
 #include "tf2_geometry_msgs/tf2_geometry_msgs.hpp"
+#include "nav2_ros_common/validate_messages.hpp"
 
 PLUGINLIB_EXPORT_CLASS(nav2_costmap_2d::StaticLayer, nav2_costmap_2d::Layer)
 
@@ -72,11 +73,9 @@ StaticLayer::onInitialize()
 
   getParameters();
 
-  rclcpp::QoS map_qos(10);  // initialize to default
+  rclcpp::QoS map_qos = nav2::qos::StandardTopicQoS();  // initialize to default
   if (map_subscribe_transient_local_) {
-    map_qos.transient_local();
-    map_qos.reliable();
-    map_qos.keep_last(1);
+    map_qos = nav2::qos::LatchedSubscriptionQoS();
   }
 
   RCLCPP_INFO(
@@ -91,14 +90,14 @@ StaticLayer::onInitialize()
   }
 
   map_sub_ = node->create_subscription<nav_msgs::msg::OccupancyGrid>(
-    map_topic_, map_qos,
-    std::bind(&StaticLayer::incomingMap, this, std::placeholders::_1));
+    map_topic_,
+    std::bind(&StaticLayer::incomingMap, this, std::placeholders::_1),
+    map_qos);
 
   if (subscribe_to_updates_) {
     RCLCPP_INFO(logger_, "Subscribing to updates");
     map_update_sub_ = node->create_subscription<map_msgs::msg::OccupancyGridUpdate>(
       map_topic_ + "_updates",
-      rclcpp::SystemDefaultsQoS(),
       std::bind(&StaticLayer::incomingUpdate, this, std::placeholders::_1));
   }
 }
@@ -111,6 +110,10 @@ StaticLayer::activate()
 void
 StaticLayer::deactivate()
 {
+  auto node = node_.lock();
+  if (dyn_params_handler_ && node) {
+    node->remove_on_set_parameters_callback(dyn_params_handler_.get());
+  }
   dyn_params_handler_.reset();
 }
 
@@ -131,7 +134,9 @@ StaticLayer::getParameters()
   declareParameter("subscribe_to_updates", rclcpp::ParameterValue(false));
   declareParameter("map_subscribe_transient_local", rclcpp::ParameterValue(true));
   declareParameter("transform_tolerance", rclcpp::ParameterValue(0.0));
-  declareParameter("map_topic", rclcpp::ParameterValue(""));
+  declareParameter("map_topic", rclcpp::ParameterValue("map"));
+  declareParameter("footprint_clearing_enabled", rclcpp::ParameterValue(false));
+  declareParameter("restore_cleared_footprint", rclcpp::ParameterValue(true));
 
   auto node = node_.lock();
   if (!node) {
@@ -140,14 +145,10 @@ StaticLayer::getParameters()
 
   node->get_parameter(name_ + "." + "enabled", enabled_);
   node->get_parameter(name_ + "." + "subscribe_to_updates", subscribe_to_updates_);
-  std::string private_map_topic, global_map_topic;
-  node->get_parameter(name_ + "." + "map_topic", private_map_topic);
-  node->get_parameter("map_topic", global_map_topic);
-  if (!private_map_topic.empty()) {
-    map_topic_ = private_map_topic;
-  } else {
-    map_topic_ = global_map_topic;
-  }
+  node->get_parameter(name_ + "." + "footprint_clearing_enabled", footprint_clearing_enabled_);
+  node->get_parameter(name_ + "." + "restore_cleared_footprint", restore_cleared_footprint_);
+  node->get_parameter(name_ + "." + "map_topic", map_topic_);
+  map_topic_ = joinWithParentNamespace(map_topic_);
   node->get_parameter(
     name_ + "." + "map_subscribe_transient_local",
     map_subscribe_transient_local_);
@@ -277,6 +278,10 @@ StaticLayer::interpretValue(unsigned char value)
 void
 StaticLayer::incomingMap(const nav_msgs::msg::OccupancyGrid::SharedPtr new_map)
 {
+  if (!nav2::validateMsg(*new_map)) {
+    RCLCPP_ERROR(logger_, "Received map message is malformed. Rejecting.");
+    return;
+  }
   if (!map_received_) {
     processMap(*new_map);
     map_received_ = true;
@@ -311,6 +316,7 @@ StaticLayer::incomingUpdate(map_msgs::msg::OccupancyGridUpdate::ConstSharedPtr u
       "StaticLayer: Map update ignored. Current map is in frame %s "
       "but update was in frame %s",
       map_frame_.c_str(), update->header.frame_id.c_str());
+    return;
   }
 
   unsigned int di = 0;
@@ -328,7 +334,7 @@ StaticLayer::incomingUpdate(map_msgs::msg::OccupancyGridUpdate::ConstSharedPtr u
 
 void
 StaticLayer::updateBounds(
-  double /*robot_x*/, double /*robot_y*/, double /*robot_yaw*/, double * min_x,
+  double robot_x, double robot_y, double robot_yaw, double * min_x,
   double * min_y,
   double * max_x,
   double * max_y)
@@ -366,6 +372,24 @@ StaticLayer::updateBounds(
   *max_y = std::max(wy, *max_y);
 
   has_updated_data_ = false;
+
+  updateFootprint(robot_x, robot_y, robot_yaw, min_x, min_y, max_x, max_y);
+}
+
+void
+StaticLayer::updateFootprint(
+  double robot_x, double robot_y, double robot_yaw,
+  double * min_x, double * min_y,
+  double * max_x,
+  double * max_y)
+{
+  if (!footprint_clearing_enabled_) {return;}
+
+  transformFootprint(robot_x, robot_y, robot_yaw, getFootprint(), transformed_footprint_);
+
+  for (unsigned int i = 0; i < transformed_footprint_.size(); i++) {
+    touch(transformed_footprint_[i].x, transformed_footprint_[i].y, min_x, min_y, max_x, max_y);
+  }
 }
 
 void
@@ -385,6 +409,13 @@ StaticLayer::updateCosts(
       count = 0;
     }
     return;
+  }
+
+  std::vector<MapLocation> map_region_to_restore;
+  if (footprint_clearing_enabled_) {
+    map_region_to_restore.reserve(100);
+    getMapRegionOccupiedByPolygon(transformed_footprint_, map_region_to_restore);
+    setMapRegionOccupiedByPolygon(map_region_to_restore, nav2_costmap_2d::FREE_SPACE);
   }
 
   if (!layered_costmap_->isRolling()) {
@@ -430,6 +461,11 @@ StaticLayer::updateCosts(
       }
     }
   }
+
+  if (footprint_clearing_enabled_ && restore_cleared_footprint_) {
+    // restore the map region occupied by the polygon using cached data
+    restoreMapRegionOccupiedByPolygon(map_region_to_restore);
+  }
   current_ = true;
 }
 
@@ -447,6 +483,9 @@ StaticLayer::dynamicParametersCallback(
   for (auto parameter : parameters) {
     const auto & param_type = parameter.get_type();
     const auto & param_name = parameter.get_name();
+    if (param_name.find(name_ + ".") != 0) {
+      continue;
+    }
 
     if (param_name == name_ + "." + "map_subscribe_transient_local" ||
       param_name == name_ + "." + "map_topic" ||
@@ -468,6 +507,15 @@ StaticLayer::dynamicParametersCallback(
         height_ = size_y_;
         has_updated_data_ = true;
         current_ = false;
+      } else if (param_name == name_ + "." + "footprint_clearing_enabled") {
+        footprint_clearing_enabled_ = parameter.as_bool();
+      } else if (param_name == name_ + "." + "restore_cleared_footprint") {
+        if (footprint_clearing_enabled_) {
+          restore_cleared_footprint_ = parameter.as_bool();
+        } else {
+          RCLCPP_WARN(logger_, "restore_cleared_footprint cannot be used "
+                      "when footprint_clearing_enabled is False. Rejecting parameter update.");
+        }
       }
     }
   }
